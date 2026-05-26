@@ -14,20 +14,28 @@ Codex 的本地聊天记录通常保存在：
 如果你之前在 Windows 上使用 Codex，session 文件里的 `cwd` 可能仍然是 Windows 路径，例如：
 
 ```text
-D:\html5app\gymlossfat
-D:\\html5app\\fitcover
-D:/html5app/video
+D:\projects\demo-app
+D:\\projects\\api-service
+D:/projects/web-client
 ```
 
 迁移到 macOS/Linux 后，项目目录可能已经变成：
 
 ```text
-/Users/dashan/Projects/html5app/gymlossfat
-/Users/dashan/Projects/html5app/fitcover
-/Users/dashan/Projects/html5app/video
+/Users/you/Projects/demo-app
+/Users/you/Projects/api-service
+/Users/you/Projects/web-client
 ```
 
 这个工具会扫描 Codex 的 session 文本文件，把旧路径前缀批量替换成新路径前缀，让历史对话重新指向正确的本地项目目录。
+
+它不依赖固定用户名、盘符或项目目录名。每个人只需要按自己的电脑结构传入 `--old` 和 `--new`：
+
+```text
+Windows 旧前缀: D:\projects
+macOS 新前缀:  /Users/you/Projects
+Linux 新前缀:  /home/you/projects
+```
 
 ## 特性
 
@@ -62,16 +70,16 @@ Python 3.9+ 推荐使用。
 
 ```bash
 python3 codex_path_fixer.py \
-  --old 'D:\html5app' \
-  --new '/Users/dashan/Projects/html5app'
+  --old 'D:\projects' \
+  --new '/Users/you/Projects'
 ```
 
 确认输出无误后再真正修改：
 
 ```bash
 python3 codex_path_fixer.py \
-  --old 'D:\html5app' \
-  --new '/Users/dashan/Projects/html5app' \
+  --old 'D:\projects' \
+  --new '/Users/you/Projects' \
   --apply
 ```
 
@@ -79,8 +87,8 @@ python3 codex_path_fixer.py \
 
 ```bash
 python3 codex_path_fixer.py \
-  --old 'D:\html5app' \
-  --new '/Users/dashan/Projects/html5app' \
+  --old 'D:\projects' \
+  --new '/Users/you/Projects' \
   --codex-home '/path/to/.codex' \
   --apply
 ```
@@ -89,8 +97,8 @@ python3 codex_path_fixer.py \
 
 ```bash
 python3 codex_path_fixer.py \
-  --old 'D:\html5app' \
-  --new '/Users/dashan/Projects/html5app' \
+  --old 'D:\projects' \
+  --new '/Users/you/Projects' \
   --apply \
   --no-backup
 ```
@@ -99,8 +107,8 @@ python3 codex_path_fixer.py \
 
 | 参数 | 说明 |
 | --- | --- |
-| `--old` | 旧路径前缀，例如 `D:\html5app` |
-| `--new` | 新路径前缀，例如 `/Users/dashan/Projects/html5app` |
+| `--old` | 旧路径前缀，例如 `D:\projects` |
+| `--new` | 新路径前缀，例如 `/Users/you/Projects` 或 `/home/you/projects` |
 | `--codex-home` | Codex home 路径，默认 `~/.codex` |
 | `--apply` | 真正写入修改；不加时只 dry-run |
 | `--backup` | 修改前备份，默认开启 |
@@ -139,7 +147,7 @@ Dry-run 不会创建备份，因为它不会修改文件。
 ## 注意事项
 
 - 建议先关闭 Codex，再执行 `--apply`，避免 session 文件正在被写入。
-- Windows 路径建议用引号包起来，例如：`'D:\html5app'`。
+- Windows 路径建议用引号包起来，例如：`'D:\projects'`。
 - 第一次运行一定先 dry-run。
 - 修改后先保留备份，确认历史对话能正常打开后再删除。
 - 本工具不会修改 `auth.json` 或 sqlite 数据库文件。
