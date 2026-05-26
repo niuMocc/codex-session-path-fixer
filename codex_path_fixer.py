@@ -248,12 +248,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--old",
         required=True,
-        help=r"Old path prefix, for example: D:\html5app",
+        help=r"Old path prefix, for example: D:\projects",
     )
     parser.add_argument(
         "--new",
         required=True,
-        help="New path prefix, for example: /Users/dashan/Projects/html5app",
+        help="New path prefix, for example: /Users/you/Projects or /home/you/projects",
     )
     parser.add_argument(
         "--codex-home",
