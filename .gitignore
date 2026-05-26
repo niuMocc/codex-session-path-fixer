@@ -1,0 +1,30 @@
+# Local Codex data
+.codex/
+sessions/
+archived_sessions/
+auth.json
+
+# Codex state databases
+state_*.sqlite
+logs_*.sqlite
+goals_*.sqlite
+*.sqlite
+*.sqlite3
+*.db
+
+# Backups and local output
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
