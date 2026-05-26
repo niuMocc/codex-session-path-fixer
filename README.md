@@ -66,7 +66,32 @@ Python 3.9+ 推荐使用。
 
 ## 使用说明
 
-先 dry-run，确认哪些文件会被修改：
+### 方式一：交互式向导
+
+普通用户推荐直接运行向导：
+
+```bash
+python3 codex_path_fixer.py
+```
+
+也可以显式指定：
+
+```bash
+python3 codex_path_fixer.py --interactive
+```
+
+向导会依次询问：
+
+- 旧 Windows 路径前缀
+- 新 macOS/Linux 路径前缀
+- Codex home 路径，默认 `~/.codex`
+- 是否在真正修改前创建备份
+
+向导会先自动执行 dry-run，列出将会修改的文件。只有你确认后，它才会真正写入修改。
+
+### 方式二：命令行参数
+
+也可以直接传入参数。先 dry-run，确认哪些文件会被修改：
 
 ```bash
 python3 codex_path_fixer.py \
@@ -111,6 +136,7 @@ python3 codex_path_fixer.py \
 | `--new` | 新路径前缀，例如 `/Users/you/Projects` 或 `/home/you/projects` |
 | `--codex-home` | Codex home 路径，默认 `~/.codex` |
 | `--apply` | 真正写入修改；不加时只 dry-run |
+| `--interactive` | 启动交互式向导；不传 `--old` 和 `--new` 时默认进入向导 |
 | `--backup` | 修改前备份，默认开启 |
 | `--no-backup` | 使用 `--apply` 时关闭备份 |
 
