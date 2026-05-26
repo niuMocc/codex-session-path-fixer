@@ -188,24 +188,41 @@ def process_file(path: Path, fixer: PathFixer, apply_changes: bool, stats: FixSt
     stats.modified_files.append(path)
 
 
-def run(args: argparse.Namespace) -> int:
-    codex_home = Path(args.codex_home).expanduser()
+def execute_fix(
+    old_prefix: str,
+    new_prefix: str,
+    codex_home_value: str,
+    apply_changes: bool,
+    backup: bool,
+) -> tuple[int, FixStats]:
+    codex_home = Path(codex_home_value).expanduser()
     roots = session_roots(codex_home)
-    fixer = build_path_fixer(args.old, args.new)
+    fixer = build_path_fixer(old_prefix, new_prefix)
     stats = FixStats()
 
-    if args.apply and args.backup:
+    if apply_changes and backup:
         try:
             stats.backup_path = create_backup(roots)
         except OSError as exc:
             print(f"Backup failed: {exc}", file=sys.stderr)
-            return 2
+            return 2, stats
 
     for path in iter_session_files(roots, stats):
-        process_file(path, fixer, args.apply, stats)
+        process_file(path, fixer, apply_changes, stats)
 
-    print_report(stats, args.apply)
-    return 1 if stats.write_errors else 0
+    print_report(stats, apply_changes)
+    return (1 if stats.write_errors else 0), stats
+
+
+def run(args: argparse.Namespace) -> int:
+    exit_code, _ = execute_fix(
+        old_prefix=args.old,
+        new_prefix=args.new,
+        codex_home_value=args.codex_home,
+        apply_changes=args.apply,
+        backup=args.backup,
+    )
+    return exit_code
 
 
 def print_report(stats: FixStats, apply_changes: bool) -> None:
@@ -241,18 +258,90 @@ def print_report(stats: FixStats, apply_changes: bool) -> None:
         print(f"  {path}")
 
 
+def prompt_text(label: str, default: str | None = None, required: bool = False) -> str:
+    while True:
+        suffix = f" [{default}]" if default is not None else ""
+        value = input(f"{label}{suffix}: ").strip()
+        if not value and default is not None:
+            return default
+        if value or not required:
+            return value
+        print("This value is required.")
+
+
+def prompt_yes_no(label: str, default: bool) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        value = input(f"{label} [{suffix}]: ").strip().lower()
+        if not value:
+            return default
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False
+        print("Please answer y or n.")
+
+
+def run_interactive() -> int:
+    print("codex-session-path-fixer interactive wizard")
+    print("This will scan Codex sessions, run a dry-run first, then ask before applying.")
+    print()
+
+    old_prefix = prompt_text(
+        "Old Windows path prefix, for example D:\\projects",
+        required=True,
+    )
+    new_prefix = prompt_text(
+        "New macOS/Linux path prefix, for example /Users/you/Projects",
+        required=True,
+    )
+    codex_home = prompt_text("Codex home", default="~/.codex")
+    backup = prompt_yes_no("Create a backup before applying changes", default=True)
+
+    print()
+    print("Running dry-run...")
+    dry_exit_code, dry_stats = execute_fix(
+        old_prefix=old_prefix,
+        new_prefix=new_prefix,
+        codex_home_value=codex_home,
+        apply_changes=False,
+        backup=backup,
+    )
+    if dry_exit_code:
+        return dry_exit_code
+
+    if not dry_stats.matched_files:
+        print()
+        print("No matching files found. Nothing to apply.")
+        return 0
+
+    print()
+    if not prompt_yes_no("Apply these changes now", default=False):
+        print("No files were modified.")
+        return 0
+
+    print()
+    print("Applying changes...")
+    apply_exit_code, _ = execute_fix(
+        old_prefix=old_prefix,
+        new_prefix=new_prefix,
+        codex_home_value=codex_home,
+        apply_changes=True,
+        backup=backup,
+    )
+    return apply_exit_code
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Fix stale Windows cwd paths in local Codex session files.",
     )
     parser.add_argument(
         "--old",
-        required=True,
         help=r"Old path prefix, for example: D:\projects",
     )
     parser.add_argument(
         "--new",
-        required=True,
         help="New path prefix, for example: /Users/you/Projects or /home/you/projects",
     )
     parser.add_argument(
@@ -264,6 +353,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         help="Actually modify files. Without this flag, the command only runs a dry-run.",
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run the step-by-step wizard. This is also the default when --old and --new are omitted.",
     )
 
     backup_group = parser.add_mutually_exclusive_group()
@@ -292,6 +386,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.interactive or (args.old is None and args.new is None):
+        try:
+            return run_interactive()
+        except ValueError as exc:
+            parser.error(str(exc))
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print("Interactive wizard cancelled.", file=sys.stderr)
+            return 130
+
+    if args.old is None or args.new is None:
+        parser.error("--old and --new must be used together, or run with --interactive")
+
     try:
         return run(args)
     except ValueError as exc:
