@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import fnmatch
 import re
 import shutil
+import subprocess
 import sys
+import threading
+from queue import Queue, Empty
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -332,6 +337,237 @@ def run_interactive() -> int:
     return apply_exit_code
 
 
+def run_gui_ui() -> int:
+    try:
+        import tkinter as tk
+        from tkinter import messagebox, scrolledtext, ttk
+    except ImportError as exc:
+        print(f"Tkinter is not available: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        print(f"Unable to open the GUI: {exc}", file=sys.stderr)
+        return 1
+
+    root.title("codex-session-path-fixer")
+    root.geometry("860x620")
+    root.minsize(760, 540)
+
+    old_var = tk.StringVar()
+    new_var = tk.StringVar()
+    home_var = tk.StringVar(value="~/.codex")
+    backup_var = tk.BooleanVar(value=True)
+    status_var = tk.StringVar(value="Enter paths, then preview or apply.")
+    result_queue: Queue[dict[str, object]] = Queue()
+    busy = {"value": False}
+
+    def set_busy(value: bool) -> None:
+        busy["value"] = value
+        state = tk.DISABLED if value else tk.NORMAL
+        preview_button.configure(state=state)
+        apply_button.configure(state=state)
+        old_entry.configure(state=state)
+        new_entry.configure(state=state)
+        home_entry.configure(state=state)
+        backup_check.configure(state=state)
+
+    def append_output(text: str) -> None:
+        output_area.configure(state=tk.NORMAL)
+        if output_area.index("end-1c") != "1.0":
+            output_area.insert(tk.END, "\n")
+        output_area.insert(tk.END, text.rstrip() + "\n")
+        output_area.see(tk.END)
+        output_area.configure(state=tk.DISABLED)
+
+    def clear_output() -> None:
+        output_area.configure(state=tk.NORMAL)
+        output_area.delete("1.0", tk.END)
+        output_area.configure(state=tk.DISABLED)
+
+    def read_inputs() -> tuple[str, str, str, bool] | None:
+        old_prefix = old_var.get().strip()
+        new_prefix = new_var.get().strip()
+        codex_home = home_var.get().strip() or "~/.codex"
+        if not old_prefix or not new_prefix:
+            messagebox.showerror("Missing values", "Please fill in both path fields.")
+            return None
+        return old_prefix, new_prefix, codex_home, bool(backup_var.get())
+
+    def run_task(mode: str, apply_changes: bool, confirm_apply: bool) -> None:
+        if busy["value"]:
+            return
+        inputs = read_inputs()
+        if inputs is None:
+            return
+        old_prefix, new_prefix, codex_home, backup = inputs
+        if confirm_apply and not messagebox.askyesno(
+            "Apply changes",
+            "This will modify Codex session files. Continue?",
+        ):
+            status_var.set("Apply cancelled.")
+            return
+
+        clear_output()
+        status_var.set("Running apply..." if apply_changes else "Running dry-run...")
+        set_busy(True)
+
+        def worker() -> None:
+            buffer = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(buffer):
+                    exit_code, stats = execute_fix(
+                        old_prefix=old_prefix,
+                        new_prefix=new_prefix,
+                        codex_home_value=codex_home,
+                        apply_changes=apply_changes,
+                        backup=backup,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive GUI guard
+                buffer.write(f"GUI error: {exc}\n")
+                exit_code = 1
+                stats = FixStats()
+
+            result_queue.put(
+                {
+                    "mode": mode,
+                    "apply_changes": apply_changes,
+                    "exit_code": exit_code,
+                    "stats": stats,
+                    "output": buffer.getvalue(),
+                }
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def poll_queue() -> None:
+        try:
+            result = result_queue.get_nowait()
+        except Empty:
+            if busy["value"]:
+                root.after(100, poll_queue)
+            return
+
+        append_output(str(result["output"]))
+        stats = result["stats"]
+        mode = str(result["mode"])
+        apply_changes = bool(result["apply_changes"])
+
+        if apply_changes:
+            set_busy(False)
+            status_var.set("Apply finished." if result["exit_code"] == 0 else "Apply finished with errors.")
+            return
+
+        if mode == "apply-preview":
+            if stats.matched_files:
+                if messagebox.askyesno(
+                    "Apply changes",
+                    f"Preview found {len(stats.matched_files)} matching file(s). Apply now?",
+                ):
+                    status_var.set("Applying changes...")
+                    run_task("apply-final", apply_changes=True, confirm_apply=False)
+                    return
+                status_var.set("Apply cancelled.")
+            else:
+                status_var.set("No matching files found.")
+            set_busy(False)
+            return
+
+        set_busy(False)
+        status_var.set("Preview finished.")
+
+    def on_preview() -> None:
+        run_task("preview", apply_changes=False, confirm_apply=False)
+
+    def on_apply() -> None:
+        run_task("apply-preview", apply_changes=False, confirm_apply=False)
+
+    def on_close() -> None:
+        if busy["value"]:
+            if not messagebox.askyesno("Close window", "An operation is running. Close anyway?"):
+                return
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
+
+    main = ttk.Frame(root, padding=16)
+    main.pack(fill=tk.BOTH, expand=True)
+
+    header = ttk.Label(
+        main,
+        text="Fix stale Codex session paths",
+        font=("Helvetica", 16, "bold"),
+    )
+    header.pack(anchor=tk.W, pady=(0, 8))
+
+    form = ttk.Frame(main)
+    form.pack(fill=tk.X)
+    form.columnconfigure(1, weight=1)
+
+    ttk.Label(form, text="Old path prefix").grid(row=0, column=0, sticky=tk.W, pady=4, padx=(0, 8))
+    old_entry = ttk.Entry(form, textvariable=old_var)
+    old_entry.grid(row=0, column=1, sticky=tk.EW, pady=4)
+
+    ttk.Label(form, text="New path prefix").grid(row=1, column=0, sticky=tk.W, pady=4, padx=(0, 8))
+    new_entry = ttk.Entry(form, textvariable=new_var)
+    new_entry.grid(row=1, column=1, sticky=tk.EW, pady=4)
+
+    ttk.Label(form, text="Codex home").grid(row=2, column=0, sticky=tk.W, pady=4, padx=(0, 8))
+    home_entry = ttk.Entry(form, textvariable=home_var)
+    home_entry.grid(row=2, column=1, sticky=tk.EW, pady=4)
+
+    backup_check = ttk.Checkbutton(form, text="Create backup before applying", variable=backup_var)
+    backup_check.grid(row=3, column=1, sticky=tk.W, pady=(6, 2))
+
+    button_row = ttk.Frame(main)
+    button_row.pack(fill=tk.X, pady=(12, 8))
+    preview_button = ttk.Button(button_row, text="Dry-run", command=on_preview)
+    preview_button.pack(side=tk.LEFT)
+    apply_button = ttk.Button(button_row, text="Apply", command=on_apply)
+    apply_button.pack(side=tk.LEFT, padx=(8, 0))
+    ttk.Button(button_row, text="Quit", command=on_close).pack(side=tk.RIGHT)
+
+    ttk.Label(main, textvariable=status_var).pack(anchor=tk.W, pady=(0, 6))
+
+    output_area = scrolledtext.ScrolledText(main, wrap=tk.WORD, height=24, state=tk.DISABLED)
+    output_area.pack(fill=tk.BOTH, expand=True)
+
+    default_example_old = "D:\\projects"
+    default_example_new = "/Users/you/Projects"
+    old_var.set(default_example_old)
+    new_var.set(default_example_new)
+
+    root.after(100, poll_queue)
+    root.mainloop()
+    return 0
+
+
+def start_gui() -> int:
+    script_path = Path(__file__).resolve()
+    result = subprocess.run(
+        [sys.executable, str(script_path), "--gui-runner"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.returncode == 0:
+        return 0
+
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    else:
+        print(
+            "Unable to open the GUI in this environment. Run it from a desktop session.",
+            file=sys.stderr,
+        )
+
+    return 1 if result.returncode < 0 else result.returncode
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Fix stale Windows cwd paths in local Codex session files.",
@@ -358,6 +594,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--interactive",
         action="store_true",
         help="Run the step-by-step wizard. This is also the default when --old and --new are omitted.",
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Open the local graphical interface.",
+    )
+    parser.add_argument(
+        "--gui-runner",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     backup_group = parser.add_mutually_exclusive_group()
@@ -386,6 +632,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.gui_runner:
+        try:
+            return run_gui_ui()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print("GUI cancelled.", file=sys.stderr)
+            return 130
+
+    if args.gui:
+        try:
+            return start_gui()
+        except ValueError as exc:
+            parser.error(str(exc))
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print("GUI cancelled.", file=sys.stderr)
+            return 130
+
     if args.interactive or (args.old is None and args.new is None):
         try:
             return run_interactive()
