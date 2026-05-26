@@ -89,7 +89,18 @@ python3 codex_path_fixer.py --interactive
 
 向导会先自动执行 dry-run，列出将会修改的文件。只有你确认后，它才会真正写入修改。
 
-### 方式二：命令行参数
+### 方式二：本地 GUI
+
+如果你想要窗口界面，直接打开本地 GUI：
+
+```bash
+python3 codex_path_fixer.py --gui
+```
+
+GUI 会提供输入框、备份勾选、Dry-run 按钮和 Apply 按钮。Apply 之前仍然会先做一次预览，再弹出确认。
+如果当前环境没有可用的桌面窗口，会提示无法打开 GUI。
+
+### 方式三：命令行参数
 
 也可以直接传入参数。先 dry-run，确认哪些文件会被修改：
 
@@ -137,6 +148,7 @@ python3 codex_path_fixer.py \
 | `--codex-home` | Codex home 路径，默认 `~/.codex` |
 | `--apply` | 真正写入修改；不加时只 dry-run |
 | `--interactive` | 启动交互式向导；不传 `--old` 和 `--new` 时默认进入向导 |
+| `--gui` | 打开本地图形界面 |
 | `--backup` | 修改前备份，默认开启 |
 | `--no-backup` | 使用 `--apply` 时关闭备份 |
 
